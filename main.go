@@ -20,7 +20,7 @@ var (
 	</head>
 	<body>
 	<h2>Upload completed!</h2>
-	<a href="http://localhost:8080">Go back</a>
+G	<a href="http://localhost:8080">Go back</a>
 	</body>
 	<script>
 		const socket = io('http://localhost');
@@ -130,6 +130,7 @@ var postHandlers = map[*regexp.Regexp]func(*regexp.Regexp, http.ResponseWriter, 
 // uploadTiles serves the endpoint to upload tiles
 func uploadTiles(re *regexp.Regexp, w http.ResponseWriter, req *http.Request) {
 	log.Println("Got multipart upload, reading parts...")
+
 	readParts(w, req)
 }
 
@@ -223,7 +224,6 @@ func readParts(w http.ResponseWriter, r *http.Request) {
 
 	// buffer to be used for reading bytes from files
 	chunk := make([]byte, UploadChunkSize)
-
 	// variables used in this loop only
 	// tempfile: filehandler for the temporary file
 	// filesize: how many bytes where written to the tempfile
@@ -232,68 +232,101 @@ func readParts(w http.ResponseWriter, r *http.Request) {
 	var filesize int
 
 	// Get the first part to extract the metadata
-	part, mpErr := multipartReader.NextPart()
-	if err != nil {
-		message := "Error while opening multipart reader: " + err.Error()
-		UploadServerError(message, w, err)
-		return
-	}
-
-	contentType := part.Header.Get("Content-Type")
-	filename := part.FileName()
-	// at this point the filename and the mimetype is known
-	log.Printf("Uploaded filename: %s", filename)
-	log.Printf("Uploaded mimetype: %s", contentType)
-
-	if !isValidMimeType(contentType) {
-		UploadInvalidMimeType(contentType, w)
-		return
-	}
-
-	// Create the temporary file to store the uploaded contents
-	tempfile, err = ioutil.TempFile(os.TempDir(), "upload-*.tif")
-	if err != nil {
-		message := "Hit error while creating temp file: " + err.Error()
-		UploadServerError(message, w, err)
-		return
-	}
-	defer tempfile.Close() // Defer closing the file
-	//defer os.Remove(tempfile.Name())
-
-	// here the temporary filename is known
-	log.Printf("Temporary filename: %s\n", tempfile.Name())
+	/* part, mpErr := multipartReader.NextPart()*/
+	//if mpErr != nil {
+	//message := "Error while opening multipart reader: " + err.Error()
+	//UploadServerError(message, w, err)
+	//return
+	/*}*/
 
 	// iterate over all parts until EOF
 	for {
-
-		// Read all chunks in the part
-		// until EOF
-		for {
-			n, readErr := part.Read(chunk)
-
-			if readErr != nil && readErr != io.EOF {
-			} else if readErr == io.EOF {
-				break
-			}
-
-			// Write to the temporary file
-			if n, err = tempfile.Write(chunk[:n]); err != nil {
-				message := "Hit error while reading chunk: " + err.Error()
-				UploadServerError(message, w, err)
-				return
-			}
-
-			filesize += n
-		}
-
 		// Get the next part
-		part, mpErr = multipartReader.NextPart()
+		part, mpErr := multipartReader.NextPart()
 		if mpErr != nil && mpErr != io.EOF {
 			message := "Error while opening multipart reader: " + err.Error()
 			log.Println(message)
 			break
 		} else if mpErr == io.EOF {
+			log.Println("No more parts to read")
 			break
+		}
+
+		switch part.FormName() {
+
+		case "layer":
+			bodyBytes := make([]byte, UploadChunkSize)
+
+			n, err := part.Read(bodyBytes)
+			if err != nil && err != io.EOF {
+				log.Println("Could not read the layer contents")
+				log.Println(err)
+				continue
+			}
+
+			log.Println("Read", n, "bytes.")
+			log.Println("bodyBytes:")
+			log.Println(string(bodyBytes))
+
+			var body map[string]interface{}
+			err = json.Unmarshal(bodyBytes[:n], &body)
+			if err != nil {
+				log.Println("Could not unmarshal layer contents")
+				log.Println(err)
+				continue
+			}
+			log.Println("Layer:")
+			log.Println(body)
+			continue
+
+		case "file":
+			contentType := part.Header.Get("Content-Type")
+			filename := part.FileName()
+			// at this point the filename and the mimetype is known
+			log.Printf("Uploaded filename: %s", filename)
+			log.Printf("Uploaded mimetype: %s", contentType)
+
+			if !isValidMimeType(contentType) {
+				UploadInvalidMimeType(contentType, w)
+				return
+			}
+
+			// Create the temporary file to store the uploaded contents
+			tempfile, err = ioutil.TempFile(os.TempDir(), "upload-*.tif")
+			if err != nil {
+				message := "Hit error while creating temp file: " + err.Error()
+				UploadServerError(message, w, err)
+				return
+			}
+			defer tempfile.Close() // Defer closing the file
+			//defer os.Remove(tempfile.Name())
+
+			// here the temporary filename is known
+			log.Printf("Temporary filename: %s\n", tempfile.Name())
+
+			// Read all chunks in the part
+			// until EOF
+			for {
+				n, readErr := part.Read(chunk)
+
+				if readErr != nil && readErr != io.EOF {
+				} else if readErr == io.EOF {
+					break
+				}
+
+				// Write to the temporary file
+				if n, err = tempfile.Write(chunk[:n]); err != nil {
+					message := "Hit error while reading chunk: " + err.Error()
+					UploadServerError(message, w, err)
+					return
+				}
+
+				filesize += n
+			}
+
+		default:
+			continue
+
 		}
 
 	}
@@ -302,7 +335,9 @@ func readParts(w http.ResponseWriter, r *http.Request) {
 	// statement will remove the file after the function returns so any
 	// errors during upload won't hit this, but at least the tempfile is
 	// cleaned up
-	processTheFile(tempfile)
+	if tempfile != nil {
+		processTheFile(tempfile)
+	}
 
 	log.Printf("Uploaded filesize: %d bytes", filesize)
 }
